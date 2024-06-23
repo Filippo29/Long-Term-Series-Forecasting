@@ -59,7 +59,9 @@ class weather_dataset(Dataset):
         
     def split(self, train_size=0.8):
         split_index = int(len(self.data)*train_size)
+        test_size = int((self.__len__() - split_index)/2)
         train_set = weather_dataset(set=self.data[:split_index], device=self.device)
-        test_set = weather_dataset(set=self.data[split_index:], device=self.device)
+        test_set = weather_dataset(set=self.data[split_index:split_index+test_size], device=self.device)
+        valid_set = weather_dataset(set=self.data[split_index+test_size:], device=self.device)
 
-        return train_set, test_set
+        return train_set, test_set, valid_set
