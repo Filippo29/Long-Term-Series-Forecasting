@@ -6,36 +6,35 @@ import numpy as np
 from torch.utils.data import Dataset
 
 import os
-import csv
 
-from datetime import datetime, timedelta
+import pandas as pd
 
 class weather_dataset(Dataset):
-    def __init__(self, seq_len=100, pred_len=200, base="/weather/", device=None, set=None):
+    def __init__(self, seq_len=100, pred_len=200, base="/weather/", device=None, set=None, times=None):
         self.seq_len = seq_len
         self.pred_len = pred_len
         self.device = device
         if set is not None:
             self.data = set
+            self.times = times
             return
         current_dir = os.getcwd()
         files = os.listdir(current_dir + base)
         csv_files = [file for file in files if file.endswith('.csv')]
         print("Found files:", csv_files)
         self.data = np.empty((0, 22), float)
-        base_date = datetime(1970, 1, 1)
-        delta = timedelta(milliseconds=1)
+        self.data = None
+        self.times = None
         for csv_file in csv_files:
-            with open(current_dir + base + csv_file, 'r', encoding='ISO-8859-1') as file:
-                csv_reader = csv.reader(file)
-                next(csv_reader)
-                for row in csv_reader:
-                    utc_time = datetime.strptime(row[0], "%d.%m.%Y %H:%M:%S")
-                    row[0] = (utc_time - base_date) // delta
-                    for i in range(1, len(row)):
-                        row[i] = float(row[i])
-                    self.data = np.vstack([self.data, row])
-        assert len(self.data) > seq_len + pred_len
+            self.data = pd.concat([self.data, pd.read_csv(current_dir + base + csv_file, encoding = "ISO-8859-1")])
+        self.times = self.parse_time(self.data)
+        date_col_name = 'Date Time'
+
+        self.data = self.data.drop(columns=[date_col_name])
+        self.data = self.data.values.astype(float)
+        self.times = self.times.values
+
+        assert len(self.data) > seq_len + pred_len and len(self.times) == len(self.data)
         print("Found a total of {} samples.".format(len(self.data)))
     
     def __len__(self):
@@ -43,12 +42,11 @@ class weather_dataset(Dataset):
 
     def __getitem__(self, i):
         sequence = self.data[i:i+self.seq_len]
-        seq_times = torch.tensor(sequence[:, 0].astype(int))
-        sequence = torch.tensor(sequence[:, 1:])
+        seq_times = torch.tensor(self.times[i:i+self.seq_len].astype(int))
+        sequence = torch.tensor(sequence)
 
         pred = self.data[i+self.seq_len:i+self.seq_len+self.pred_len]
-        pred_times = torch.tensor(pred[:, 0].astype(int))
-        pred = torch.tensor(pred[:, 1:])
+        pred_times = torch.tensor(self.times[i+self.seq_len:i+self.seq_len+self.pred_len].astype(int))
 
         if self.device is not None:
             seq_times.to(self.device)
@@ -60,8 +58,20 @@ class weather_dataset(Dataset):
     def split(self, train_size=0.8):
         split_index = int(len(self.data)*train_size)
         test_size = int((self.__len__() - split_index)/2)
-        train_set = weather_dataset(set=self.data[:split_index], device=self.device)
-        test_set = weather_dataset(set=self.data[split_index:split_index+test_size], device=self.device)
-        valid_set = weather_dataset(set=self.data[split_index+test_size:], device=self.device)
+        train_set = weather_dataset(set=self.data[:split_index], times=self.times[:split_index], device=self.device)
+        test_set = weather_dataset(set=self.data[split_index:split_index+test_size], times=self.times[split_index:split_index+test_size], device=self.device)
+        valid_set = weather_dataset(set=self.data[split_index+test_size:], times=self.times[split_index+test_size:], device=self.device)
 
         return train_set, test_set, valid_set
+    
+    def parse_time(self, df):
+        dates_df = df.copy()
+        dates_df["Date Time"] = pd.to_datetime(dates_df["Date Time"], dayfirst=True)
+        dates_df['month'] = dates_df["Date Time"].apply(lambda row:row.month,1)
+        dates_df['day'] = dates_df["Date Time"].apply(lambda row:row.day,1)
+        dates_df['weekday'] = dates_df["Date Time"].apply(lambda row:row.weekday(),1)
+        dates_df['hour'] = dates_df["Date Time"].apply(lambda row:row.hour,1)
+        dates_df['minute'] = dates_df["Date Time"].apply(lambda row:row.minute,1)
+        dates_df['minute'] = dates_df.minute.map(lambda x:x//15)
+        freq_map = ['month','day','weekday','hour','minute']
+        return dates_df[freq_map]
