@@ -1,7 +1,4 @@
 import torch
-import torch.nn as nn
-
-import numpy as np
 
 from torch.utils.data import Dataset
 
@@ -10,7 +7,7 @@ import os
 import pandas as pd
 
 class weather_dataset(Dataset):
-    def __init__(self, seq_len=100, pred_len=200, base="/weather/", device=None, set=None, times=None):
+    def __init__(self, seq_len=300, pred_len=100, base="/weather/", device=None, set=None, times=None):
         self.seq_len = seq_len
         self.pred_len = pred_len
         self.device = device
@@ -22,7 +19,6 @@ class weather_dataset(Dataset):
         files = os.listdir(current_dir + base)
         csv_files = [file for file in files if file.endswith('.csv')]
         print("Found files:", csv_files)
-        self.data = np.empty((0, 22), float)
         self.data = None
         self.times = None
         for csv_file in csv_files:
@@ -53,7 +49,7 @@ class weather_dataset(Dataset):
             sequence.to(self.device)
             pred_times.to(self.device)
             pred.to(self.device)
-        return seq_times, sequence, pred_times, pred
+        return seq_times.float(), sequence, pred_times.float(), pred
         
     def split(self, train_size=0.8):
         split_index = int(len(self.data)*train_size)
@@ -71,7 +67,5 @@ class weather_dataset(Dataset):
         dates_df['day'] = dates_df["Date Time"].apply(lambda row:row.day,1)
         dates_df['weekday'] = dates_df["Date Time"].apply(lambda row:row.weekday(),1)
         dates_df['hour'] = dates_df["Date Time"].apply(lambda row:row.hour,1)
-        dates_df['minute'] = dates_df["Date Time"].apply(lambda row:row.minute,1)
-        dates_df['minute'] = dates_df.minute.map(lambda x:x//15)
-        freq_map = ['month','day','weekday','hour','minute']
+        freq_map = ['month','day','weekday','hour']
         return dates_df[freq_map]
