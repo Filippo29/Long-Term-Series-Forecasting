@@ -7,10 +7,9 @@ import os
 import pandas as pd
 
 class weather_dataset(Dataset):
-    def __init__(self, seq_len=300, pred_len=100, base="/weather/", device=None, set=None, times=None):
+    def __init__(self, seq_len=300, pred_len=100, base="/weather/", set=None, times=None):
         self.seq_len = seq_len
         self.pred_len = pred_len
-        self.device = device
         if set is not None:
             self.data = set
             self.times = times
@@ -41,22 +40,17 @@ class weather_dataset(Dataset):
         seq_times = torch.tensor(self.times[i:i+self.seq_len].astype(int))
         sequence = torch.tensor(sequence)
 
-        pred = self.data[i+self.seq_len:i+self.seq_len+self.pred_len]
+        pred = torch.tensor(self.data[i+self.seq_len:i+self.seq_len+self.pred_len])
         pred_times = torch.tensor(self.times[i+self.seq_len:i+self.seq_len+self.pred_len].astype(int))
 
-        if self.device is not None:
-            seq_times.to(self.device)
-            sequence.to(self.device)
-            pred_times.to(self.device)
-            pred.to(self.device)
-        return seq_times.float(), sequence, pred_times.float(), pred
+        return seq_times.float(), sequence.float(), pred_times.float(), pred.float()
         
     def split(self, train_size=0.8):
         split_index = int(len(self.data)*train_size)
         test_size = int((self.__len__() - split_index)/2)
-        train_set = weather_dataset(set=self.data[:split_index], times=self.times[:split_index], device=self.device)
-        test_set = weather_dataset(set=self.data[split_index:split_index+test_size], times=self.times[split_index:split_index+test_size], device=self.device)
-        valid_set = weather_dataset(set=self.data[split_index+test_size:], times=self.times[split_index+test_size:], device=self.device)
+        train_set = weather_dataset(seq_len=self.seq_len, pred_len=self.pred_len, set=self.data[:split_index], times=self.times[:split_index])
+        test_set = weather_dataset(seq_len=self.seq_len, pred_len=self.pred_len, set=self.data[split_index:split_index+test_size], times=self.times[split_index:split_index+test_size])
+        valid_set = weather_dataset(seq_len=self.seq_len, pred_len=self.pred_len, set=self.data[split_index+test_size:], times=self.times[split_index+test_size:])
 
         return train_set, test_set, valid_set
     
