@@ -78,7 +78,7 @@ class MultiscaleIsometricConvolutionLayer(nn.Module):
             merged = torch.cat((merged, different_scales[i].unsqueeze(1)), dim=1)
         merged = self.conv2d(merged.permute(0,3,1,2)).squeeze(-2).permute(0,2,1)
         
-        mg_projected = self.norm_linear(self.linear2(self.dropout(self.relu(self.linear1(merged))))) # projection with a small ffw network of the merged tensor maintaining the d_model
+        mg_projected = self.norm_linear(self.linear2(self.dropout(self.relu(self.linear1(merged))))) # projection with a small ffn network of the merged tensor maintaining the d_model
         
         return self.norm(merged + mg_projected)
 
@@ -96,7 +96,7 @@ class Embeddings(nn.Module):
     def __init__(self, d_model, tot_len, dropour_prob=0.1):
         super(Embeddings, self).__init__()
         self.TFE = nn.Linear(5, d_model) # time features embeddings: in this implementation is just a linear projection of ['month','day','weekday','hour','minute'] to the dimension of the model
-        self.PE = PositionalEmbeddings(d_model, tot_len) # sine cosine positional embeddings
+        self.PE = PositionalEmbeddings(d_model, tot_len) # sinusoidal positional embeddings
         self.VE = nn.Conv1d(in_channels=21, out_channels=d_model, kernel_size=3, padding=1, padding_mode='circular') # value embeddings for the input data
         self.dropout = nn.Dropout(dropour_prob)
     

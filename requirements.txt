@@ -1,0 +1,10 @@
+ipykernel
+ipython
+jupyter_client
+jupyter_core
+matplotlib==3.9.1
+matplotlib-inline
+numpy==1.26.4
+pandas==2.2.2
+torch==2.3.0
+tqdm==4.66.4
