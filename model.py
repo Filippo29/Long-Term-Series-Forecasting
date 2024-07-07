@@ -18,7 +18,7 @@ class MultiScaleDecomposition(nn.Module):
             x_padded = torch.cat([front, x, end], dim=1)
             
             avgs.append(avg(x_padded.permute(0, 2, 1)).permute(0, 2, 1))
-            diffs.append(x - avgs[-1])
+            diffs.append(x - avgs[-1]) # Xs = X - Xt
         return self.mean(diffs).float().permute(0, 2, 1), self.mean(avgs).float().permute(0, 2, 1)
 
 class MultiscaleIsometricConvolutionLayer(nn.Module):
@@ -62,23 +62,23 @@ class MultiscaleIsometricConvolutionLayer(nn.Module):
             padding = skip.shape[2] - 2*scale_i.shape[2] + self.isometric_conv[i].kernel_size[0] - 1    # adaptive padding to match different input_size - pred_len combinations
             zeros = torch.zeros((scale_i.shape[0], scale_i.shape[1], scale_i.shape[2]+padding), device=self.device)
             scale_i = torch.cat((zeros, scale_i), dim=-1)
-            scale_i = self.drop(self.act(self.isometric_conv[i](scale_i)))
+            scale_i = self.drop(self.act(self.isometric_conv[i](scale_i))) # isometric convolution
             scale_i = self.norm((scale_i+skip).permute(0, 2, 1)).permute(0, 2, 1)
 
-            scale_i = self.drop(self.act(self.conv_trans[i](scale_i)))
+            scale_i = self.drop(self.act(self.conv_trans[i](scale_i))) # conv trans to upscale back
             scale_i = scale_i[:, :, :x.shape[1]]
 
             scale_i = self.norm(scale_i.permute(0, 2, 1) + scale_i_src)
 
             different_scales.append(scale_i)
 
-        # merge all the captured scales
+        # merge all the captured scales with a 2d convolution in order to weight differently each scale
         merged = torch.tensor([], device=self.device)
         for i in range(len(self.conv_kernel)):
             merged = torch.cat((merged, different_scales[i].unsqueeze(1)), dim=1)
         merged = self.conv2d(merged.permute(0,3,1,2)).squeeze(-2).permute(0,2,1)
         
-        mg_projected = self.norm_linear(self.linear2(self.dropout(self.relu(self.linear1(merged)))))
+        mg_projected = self.norm_linear(self.linear2(self.dropout(self.relu(self.linear1(merged))))) # projection with a small ffw network of the merged tensor maintaining the d_model
         
         return self.norm(merged + mg_projected)
 
@@ -95,9 +95,9 @@ def PositionalEmbeddings(d_model, len):
 class Embeddings(nn.Module):
     def __init__(self, d_model, tot_len, dropour_prob=0.1):
         super(Embeddings, self).__init__()
-        self.TFE = nn.Linear(4, d_model)
-        self.PE = PositionalEmbeddings(d_model, tot_len)
-        self.VE = nn.Conv1d(in_channels=21, out_channels=d_model, kernel_size=3, padding=1, padding_mode='circular')
+        self.TFE = nn.Linear(5, d_model) # time features embeddings: in this implementation is just a linear projection of ['month','day','weekday','hour','minute'] to the dimension of the model
+        self.PE = PositionalEmbeddings(d_model, tot_len) # sine cosine positional embeddings
+        self.VE = nn.Conv1d(in_channels=21, out_channels=d_model, kernel_size=3, padding=1, padding_mode='circular') # value embeddings for the input data
         self.dropout = nn.Dropout(dropour_prob)
     
     def forward(self, x, time_tokens):
@@ -126,14 +126,14 @@ class MICN(nn.Module):
 
     
     def forward(self, x, x_time_tokens, y_time_tokens):
-        Xs, Xt = self.decomposition(x)
+        Xs, Xt = self.decomposition(x) # separate the trend cyclical and seasonal parts of the input x
         
-        Yt = self.regre(Xt).permute(0, 2, 1)[:, -self.pred_len:, :]
+        Yt = self.regre(Xt).permute(0, 2, 1)[:, -self.pred_len:, :] # trend cyclical prediction block: a simple linear regression is enough to make a prediction based on the trend-cyclical information
 
         Xzero = torch.zeros((x.shape[0], x.shape[2], self.pred_len), device=self.device)
         Xs = torch.cat([Xs[:, :, -self.seq_len:], Xzero], dim=2)
-        embedded = self.embeddings(Xs, torch.cat([x_time_tokens, y_time_tokens], dim=1))
-
+        embedded = self.embeddings(Xs, torch.cat([x_time_tokens, y_time_tokens], dim=1)) # embeds the seasonal x concatenated with a tensor of zero to have a total length of seq_len + pred_len
+        
         Ys = self.seasonalPred(embedded)[:, -self.pred_len:, :]
 
         return Ys  + Yt

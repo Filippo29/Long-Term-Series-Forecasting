@@ -45,7 +45,7 @@ class weather_dataset(Dataset):
 
         return seq_times.float(), sequence.float(), pred_times.float(), pred.float()
         
-    def split(self, train_size=0.8):
+    def split(self, train_size=0.8): # split the current instance in train, test and validation sets where the train set is 80% of all the data and the remaining 20% is equally divided in test and validation. In this case since we have a big quantity of data, it is enough to have a test and validation set of only 10%
         split_index = int(len(self.data)*train_size)
         test_size = int((self.__len__() - split_index)/2)
         train_set = weather_dataset(seq_len=self.seq_len, pred_len=self.pred_len, set=self.data[:split_index], times=self.times[:split_index])
@@ -54,12 +54,14 @@ class weather_dataset(Dataset):
 
         return train_set, test_set, valid_set
     
-    def parse_time(self, df):
+    def parse_time(self, df): # parse the time that is initially stored in the format 'dd.MM.yyyy hh:mm:ss' to a pandas dataframe that contains ['month','day','weekday','hour','minute'] in separate columns. The paper uses the same parsing strategy
         dates_df = df.copy()
         dates_df["Date Time"] = pd.to_datetime(dates_df["Date Time"], dayfirst=True)
         dates_df['month'] = dates_df["Date Time"].apply(lambda row:row.month,1)
         dates_df['day'] = dates_df["Date Time"].apply(lambda row:row.day,1)
         dates_df['weekday'] = dates_df["Date Time"].apply(lambda row:row.weekday(),1)
         dates_df['hour'] = dates_df["Date Time"].apply(lambda row:row.hour,1)
-        freq_map = ['month','day','weekday','hour']
+        dates_df['minute'] = dates_df["Date Time"].apply(lambda row:row.minute,1)
+        dates_df['minute'] = dates_df.minute.map(lambda x:x//15)
+        freq_map = ['month','day','weekday','hour','minute']
         return dates_df[freq_map]
