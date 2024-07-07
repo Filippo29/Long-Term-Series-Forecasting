@@ -4,14 +4,14 @@ import torch.nn as nn
 class MultiScaleDecomposition(nn.Module):
     def __init__(self, kernel_sizes):
         super(MultiScaleDecomposition, self).__init__()
-        self.moving_avg = [nn.AvgPool1d(kernel_size=kernel_size, stride=1, padding=0) for kernel_size in kernel_sizes] # not trainable so nn.ModuleList is not needed
+        self.avg_pool = [nn.AvgPool1d(kernel_size=kernel_size, stride=1, padding=0) for kernel_size in kernel_sizes] # not trainable so nn.ModuleList is not needed
         self.mean = lambda x: sum(x) / len(x)
     
     def forward(self, x):
         avgs = []
         diffs = []
         
-        for avg in self.moving_avg:
+        for avg in self.avg_pool:
             # Padding to preserve the output shape
             front = x[:, 0:1, :].repeat(1, (avg.kernel_size[0] - 1) // 2, 1)
             end = x[:, -1:, :].repeat(1, (avg.kernel_size[0] - 1) // 2, 1)
@@ -31,7 +31,7 @@ class MultiscaleIsometricConvolutionLayer(nn.Module):
         self.isometric_conv = nn.ModuleList([nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=i, padding=0, stride=1) for i in isometric_kernel])
         self.conv = nn.ModuleList([nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=i, padding=i//2, stride=i) for i in conv_kernel])
         self.conv_trans = nn.ModuleList([nn.ConvTranspose1d(in_channels=d_model, out_channels=d_model, kernel_size=i, padding=0, stride=i) for i in conv_kernel])
-        self.moving_avg = [nn.AvgPool1d(kernel_size=kernel_size, stride=1, padding=0) for kernel_size in decomp_kernel] # not trainable so nn.ModuleList is not needed
+        self.avg_pool = [nn.AvgPool1d(kernel_size=kernel_size, stride=1, padding=0) for kernel_size in decomp_kernel] # not trainable so nn.ModuleList is not needed
         self.conv2d = torch.nn.Conv2d(in_channels=d_model, out_channels=d_model, kernel_size=(len(conv_kernel), 1))
 
         self.linear1 = nn.Linear(d_model, d_model*4) # the paper assigns custom weights
@@ -49,17 +49,17 @@ class MultiscaleIsometricConvolutionLayer(nn.Module):
         different_scales = []  
         for i in range(len(self.conv_kernel)):
             # avg
-            front = x[:, 0:1, :].repeat(1, (self.moving_avg[i].kernel_size[0] - 1) // 2, 1)
-            end = x[:, -1:, :].repeat(1, (self.moving_avg[i].kernel_size[0] - 1) // 2 + 1, 1)
+            front = x[:, 0:1, :].repeat(1, (self.avg_pool[i].kernel_size[0] - 1) // 2, 1)
+            end = x[:, -1:, :].repeat(1, (self.avg_pool[i].kernel_size[0] - 1) // 2 + 1, 1)
             x_padded = torch.cat([front, x, end], dim=1)
 
-            scale_i_src = x - self.moving_avg[i](x_padded.permute(0, 2, 1)).permute(0, 2, 1)
+            scale_i_src = x - self.avg_pool[i](x_padded.permute(0, 2, 1)).permute(0, 2, 1)
 
             # isometric conv
             skip = self.drop(self.act(self.conv[i](scale_i_src.permute(0, 2, 1))))
             scale_i = skip
 
-            padding = skip.shape[2] - 2*scale_i.shape[2] + self.isometric_conv[i].kernel_size[0] - 1
+            padding = skip.shape[2] - 2*scale_i.shape[2] + self.isometric_conv[i].kernel_size[0] - 1    # adaptive padding to match different input_size - pred_len combinations
             zeros = torch.zeros((scale_i.shape[0], scale_i.shape[1], scale_i.shape[2]+padding), device=self.device)
             scale_i = torch.cat((zeros, scale_i), dim=-1)
             scale_i = self.drop(self.act(self.isometric_conv[i](scale_i)))
@@ -81,17 +81,6 @@ class MultiscaleIsometricConvolutionLayer(nn.Module):
         mg_projected = self.norm_linear(self.linear2(self.dropout(self.relu(self.linear1(merged)))))
         
         return self.norm(merged + mg_projected)
-
-class SeasonalPredictionBlock(nn.Module):
-    def __init__(self, d_model, num_layers, device=torch.device("cpu")):
-        super(SeasonalPredictionBlock, self).__init__()
-        self.layers = nn.ModuleList([MultiscaleIsometricConvolutionLayer(d_model, device=device) for i in range(num_layers)])
-        self.linear = nn.Linear(d_model, 21)
-
-    def forward(self, dec):
-        for mic_layer in self.layers:
-            dec = mic_layer(dec)
-        return self.linear(dec)
 
 def PositionalEmbeddings(d_model, len):
     positions = torch.arange(0, len).unsqueeze_(1)
@@ -117,7 +106,7 @@ class Embeddings(nn.Module):
         return self.dropout(tfe + self.PE + ve)
 
 class MICN(nn.Module):
-    def __init__(self, seq_len, pred_len, n_layers=1, d_model=256, device=torch.device("cpu")):
+    def __init__(self, seq_len, pred_len, d_model=256, device=torch.device("cpu")):
         super(MICN, self).__init__()
         self.seq_len = seq_len
         self.pred_len = pred_len
@@ -131,7 +120,7 @@ class MICN(nn.Module):
         self.embeddings = Embeddings(self.d_model, seq_len + pred_len)
         self.embeddings.PE = self.embeddings.PE.to(device)
 
-        self.conv_trans = SeasonalPredictionBlock(d_model, n_layers, device=device)
+        self.seasonalPred =  nn.Sequential(MultiscaleIsometricConvolutionLayer(d_model, device=device), nn.Linear(d_model, 21))
 
         self.to(device)
 
@@ -145,6 +134,6 @@ class MICN(nn.Module):
         Xs = torch.cat([Xs[:, :, -self.seq_len:], Xzero], dim=2)
         embedded = self.embeddings(Xs, torch.cat([x_time_tokens, y_time_tokens], dim=1))
 
-        Ys = self.conv_trans(embedded)[:, -self.pred_len:, :]
+        Ys = self.seasonalPred(embedded)[:, -self.pred_len:, :]
 
         return Ys  + Yt
